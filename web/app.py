@@ -13,359 +13,244 @@ from kml_parser import parse_kml, KmlFeature
 from turef_converter import to_turef_tm, to_ed50_utm, to_dms
 
 
+# ── Layer tıklamalarını harita click eventine ilet ─────────────────────────
 class LayerClickPropagator(MacroElement):
-    """
-    Tüm vektör layer tıklamalarını harita click eventine yönlendirir.
-    Bu sayede st_folium'un last_clicked değeri polygon/polyline
-    tıklamalarında da güncellenir.
-    """
     _template = Template(u"""
         {% macro script(this, kwargs) %}
         (function() {
-            var mapObj = {{ this._parent.get_name() }};
-            function propagate(layer) {
+            var m = {{ this._parent.get_name() }};
+            function attach(layer) {
                 if (typeof layer.on === 'function') {
                     layer.on('click', function(e) {
-                        mapObj.fire('click', {
-                            latlng: e.latlng,
-                            originalEvent: e.originalEvent
-                        });
+                        m.fire('click', {latlng: e.latlng, originalEvent: e.originalEvent});
                     });
                 }
             }
-            mapObj.eachLayer(propagate);
-            mapObj.on('layeradd', function(e) { propagate(e.layer); });
+            m.eachLayer(attach);
+            m.on('layeradd', function(e) { attach(e.layer); });
         })();
         {% endmacro %}
     """)
-
     def __init__(self):
         super().__init__()
         self._name = 'LayerClickPropagator'
 
-# ─── Sayfa ayarı ───────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title='KeMaL',
-    page_icon='🌍',
-    layout='wide',
-    initial_sidebar_state='expanded',
-)
 
-# ─── CSS ───────────────────────────────────────────────────────────────────
+# ─── Sayfa ─────────────────────────────────────────────────────────────────
+st.set_page_config(page_title='KeMaL', page_icon='🌍', layout='wide',
+                   initial_sidebar_state='expanded')
+
 st.markdown("""
 <style>
-/* Genel arka plan */
-.stApp { background: #0a0a18; color: #e0e0e0; }
+.stApp { background:#0a0a18; color:#e0e0e0; }
+[data-testid="stSidebar"] { background:#0f0f1e !important; }
+[data-testid="stSidebar"] * { color:#e0e0e0 !important; }
+hr { border-color:rgba(255,255,255,0.06) !important; }
 
-/* Sidebar */
-[data-testid="stSidebar"] { background: #0f0f1e !important; }
-[data-testid="stSidebar"] * { color: #e0e0e0 !important; }
-
-/* Başlık */
-.kemal-header {
-    display: flex; align-items: center; gap: 10px;
-    padding: 8px 0 16px;
-}
-.kemal-title {
-    font-size: 26px; font-weight: 800;
-    letter-spacing: 3px; color: #fff;
-}
-.kemal-sub {
-    font-size: 12px; color: #666; letter-spacing: 1px;
-    margin-top: -4px;
-}
-
-/* Koordinat kartları */
 .coord-card {
-    background: rgba(255,255,255,0.04);
-    border-radius: 12px; padding: 14px 16px;
-    margin-bottom: 10px;
-    border: 1px solid rgba(255,255,255,0.08);
+    background:rgba(255,255,255,0.04); border-radius:12px;
+    padding:14px 16px; margin-bottom:10px;
+    border:1px solid rgba(255,255,255,0.08);
 }
-.coord-card-title {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
-    margin-bottom: 10px; padding-bottom: 6px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+.coord-title {
+    font-size:11px; font-weight:700; letter-spacing:.5px;
+    margin-bottom:10px; padding-bottom:6px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
 }
-.coord-row {
-    display: flex; justify-content: space-between;
-    font-size: 12px; margin-bottom: 5px;
-}
-.coord-label { color: #888; }
-.coord-value { color: #fff; font-family: monospace; font-weight: 600; }
-.coord-dms   { color: #555; font-family: monospace; font-size: 11px; }
+.coord-row { display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px; }
+.coord-label { color:#888; }
+.coord-value { color:#fff; font-family:monospace; font-weight:600; }
+.coord-dms   { color:#555; font-family:monospace; font-size:11px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:5px;
+         font-size:10px; font-weight:700; margin-left:8px; }
+.b-blue   { background:rgba(74,158,255,.15); color:#4a9eff; border:1px solid rgba(74,158,255,.3); }
+.b-orange { background:rgba(255,159,10,.15);  color:#ff9f0a; border:1px solid rgba(255,159,10,.3); }
+.b-green  { background:rgba(52,199,89,.15);   color:#34c759; border:1px solid rgba(52,199,89,.3); }
 
-/* Badge */
-.badge {
-    display: inline-block; padding: 2px 8px;
-    border-radius: 5px; font-size: 10px; font-weight: 700;
-    margin-left: 8px; vertical-align: middle;
+.hint-box {
+    color:#444; font-size:13px; padding:20px 12px; text-align:center;
+    border:1px dashed #222; border-radius:10px; line-height:1.7;
 }
-.badge-blue   { background: rgba(74,158,255,0.15); color: #4a9eff;
-                border: 1px solid rgba(74,158,255,0.3); }
-.badge-orange { background: rgba(255,159,10,0.15);  color: #ff9f0a;
-                border: 1px solid rgba(255,159,10,0.3); }
-.badge-green  { background: rgba(52,199,89,0.15);   color: #34c759;
-                border: 1px solid rgba(52,199,89,0.3); }
-
-/* Feature listesi */
 .feature-item {
-    padding: 6px 10px; border-radius: 7px; margin-bottom: 4px;
-    background: rgba(255,255,255,0.04); font-size: 12px;
-    cursor: pointer;
+    padding:6px 10px; border-radius:7px; margin-bottom:4px;
+    background:rgba(255,255,255,0.04); font-size:12px;
 }
-.feature-item:hover { background: rgba(74,158,255,0.1); }
-
-/* Divider */
-hr { border-color: rgba(255,255,255,0.06) !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Session state ──────────────────────────────────────────────────────────
-if 'features' not in st.session_state:
-    st.session_state.features = []
-if 'file_name' not in st.session_state:
-    st.session_state.file_name = None
-if 'clicked' not in st.session_state:
-    st.session_state.clicked = None
-if 'my_location' not in st.session_state:
-    st.session_state.my_location = None
-if 'gps_active' not in st.session_state:
-    st.session_state.gps_active = False
-if '_cached_map' not in st.session_state:
-    st.session_state._cached_map = None
-if '_map_cache_key' not in st.session_state:
-    st.session_state._map_cache_key = None
+# ─── Session state ─────────────────────────────────────────────────────────
+for k, v in [('features', []), ('file_name', None),
+              ('my_location', None), ('gps_active', False)]:
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 
-# ─── Yardımcılar ────────────────────────────────────────────────────────────
-
-def hex_to_rgb(hex_color: str, opacity: float = 1.0) -> str:
-    """#rrggbb → 'rgba(r,g,b,a)'"""
-    h = hex_color.lstrip('#')
-    if len(h) == 6:
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-        return f'rgba({r},{g},{b},{opacity})'
-    return f'rgba(255,68,68,{opacity})'
-
-
-def _kml_bounds(features: list[KmlFeature]):
-    """Tüm feature'lardan bounding box hesapla → [[min_lat,min_lon],[max_lat,max_lon]]"""
-    all_lats, all_lons = [], []
+# ─── Yardımcılar ───────────────────────────────────────────────────────────
+def _kml_bounds(features):
+    lats, lons = [], []
     for f in features:
         pts = f.coordinates[:]
-        for ring in f.rings:
-            pts += ring
+        for r in f.rings:
+            pts += r
         for lon, lat in pts:
-            all_lats.append(lat); all_lons.append(lon)
-    if not all_lats:
+            lats.append(lat); lons.append(lon)
+    if not lats:
         return None
-    return [[min(all_lats), min(all_lons)], [max(all_lats), max(all_lons)]]
+    return [[min(lats), min(lons)], [max(lats), max(lons)]]
 
 
-def build_map(features: list[KmlFeature], my_location: dict | None = None) -> folium.Map:
-    """Folium haritası oluştur — ESRI satellite altlık."""
-    m = folium.Map(
-        location=[39.0, 35.0],
-        zoom_start=6,
-        tiles=None,
-        prefer_canvas=True,
-    )
+def build_map(features, my_location=None):
+    m = folium.Map(location=[39.0, 35.0], zoom_start=6, tiles=None, prefer_canvas=True)
 
-    # ── Satellite katman (ESRI World Imagery — ücretsiz) ──
     folium.TileLayer(
         tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='ESRI World Imagery',
-        name='🛰 Satellite (ESRI)',
-        overlay=False,
-        control=True,
-        max_zoom=20,
+        attr='ESRI World Imagery', name='🛰 Satellite', overlay=False, control=True, max_zoom=20,
     ).add_to(m)
+    folium.TileLayer(tiles='OpenStreetMap', name='🗺 OpenStreetMap',
+                     overlay=False, control=True).add_to(m)
 
-    # ── OpenStreetMap (alternatif) ──
-    folium.TileLayer(
-        tiles='OpenStreetMap',
-        name='🗺 OpenStreetMap',
-        overlay=False,
-        control=True,
-    ).add_to(m)
-
-    # ── KML geometrileri ──
     for i, f in enumerate(features):
-        popup_html = _feature_popup(f)
+        name = f.name or f'Özellik {i+1}'
+        popup_html = f'<b>{name}</b>' + (f'<br>{f.description}' if f.description else '')
 
         if f.geometry_type == 'Point' and f.coordinates:
             lon, lat = f.coordinates[0]
-            folium.Marker(
-                location=[lat, lon],
-                tooltip=f.name or f'Özellik {i+1}',
-                popup=folium.Popup(popup_html, max_width=280),
-            ).add_to(m)
+            folium.Marker([lat, lon], tooltip=name,
+                          popup=folium.Popup(popup_html, max_width=280)).add_to(m)
 
         elif f.geometry_type == 'LineString' and f.coordinates:
-            folium.PolyLine(
-                locations=[[lat, lon] for lon, lat in f.coordinates],
-                color=f.style.stroke_color,
-                weight=max(1, f.style.stroke_width),
-                opacity=0.9,
-                tooltip=f.name or f'Çizgi {i+1}',
-                popup=folium.Popup(popup_html, max_width=280),
-            ).add_to(m)
+            folium.PolyLine([[lat, lon] for lon, lat in f.coordinates],
+                            color=f.style.stroke_color,
+                            weight=max(1, f.style.stroke_width),
+                            opacity=0.9, tooltip=name,
+                            popup=folium.Popup(popup_html, max_width=280)).add_to(m)
 
         elif f.geometry_type == 'Polygon' and f.rings:
-            locations = [[lat, lon] for lon, lat in f.rings[0]]
-            holes = [[[lat, lon] for lon, lat in ring] for ring in f.rings[1:]]
             folium.Polygon(
-                locations=locations,
-                holes=holes if holes else None,
-                color=f.style.stroke_color,
-                weight=max(1, f.style.stroke_width),
-                fill_color=f.style.fill_color,
-                fill_opacity=f.style.fill_opacity,
-                tooltip=f.name or f'Poligon {i+1}',
-                popup=folium.Popup(popup_html, max_width=280),
-                # consumeTapEvents=False → tıklama harita click eventine ulaşır
+                locations=[[lat, lon] for lon, lat in f.rings[0]],
+                holes=[[[lat, lon] for lon, lat in r] for r in f.rings[1:]] or None,
+                color=f.style.stroke_color, weight=max(1, f.style.stroke_width),
+                fill_color=f.style.fill_color, fill_opacity=f.style.fill_opacity,
+                tooltip=name, popup=folium.Popup(popup_html, max_width=280),
             ).add_to(m)
 
-    # ── KML alanına zoom (max 17 — altlık kaybolmasın) ──
     if features:
-        bounds = _kml_bounds(features)
-        if bounds:
-            m.fit_bounds(bounds, padding=(50, 50), max_zoom=17)
+        b = _kml_bounds(features)
+        if b:
+            m.fit_bounds(b, padding=(50, 50), max_zoom=17)
 
-    # ── Kullanıcı konumu ──
     if my_location:
-        ulat = my_location['lat']
-        ulon = my_location['lng']
-        # Mavi dolu daire + doğruluk halkası
-        folium.CircleMarker(
-            location=[ulat, ulon],
-            radius=10,
-            color='#ffffff',
-            weight=2,
-            fill=True,
-            fill_color='#4a9eff',
-            fill_opacity=1.0,
-            tooltip='Konumunuz',
-            popup=folium.Popup(
-                f'<b>Konumunuz</b><br>{ulat:.6f}°, {ulon:.6f}°',
-                max_width=200,
-            ),
-            zIndexOffset=1000,
-        ).add_to(m)
-        folium.CircleMarker(
-            location=[ulat, ulon],
-            radius=22,
-            color='#4a9eff',
-            weight=1.5,
-            fill=True,
-            fill_color='#4a9eff',
-            fill_opacity=0.15,
-        ).add_to(m)
+        ulat, ulon = my_location['lat'], my_location['lng']
+        folium.CircleMarker([ulat, ulon], radius=10, color='#fff', weight=2,
+                            fill=True, fill_color='#4a9eff', fill_opacity=1.0,
+                            tooltip='Konumunuz', zIndexOffset=1000).add_to(m)
+        folium.CircleMarker([ulat, ulon], radius=22, color='#4a9eff', weight=1.5,
+                            fill=True, fill_color='#4a9eff', fill_opacity=0.15).add_to(m)
+        if not features:
+            m.fit_bounds([[ulat-.01, ulon-.01], [ulat+.01, ulon+.01]], max_zoom=16)
 
     folium.LayerControl(collapsed=False).add_to(m)
-    # Layer tıklamalarını harita click eventine yönlendir
     LayerClickPropagator().add_to(m)
-
     return m
 
 
-def _feature_popup(f: KmlFeature) -> str:
-    name = f.name or 'Özellik'
-    desc = f.description or ''
-    return f"""
-    <div style="font-family:system-ui;max-width:260px">
-        <b style="font-size:14px">{name}</b>
-        {'<hr style="margin:6px 0">' + desc if desc else ''}
-    </div>
-    """
-
-
-def _coord_card_html(lat: float, lon: float) -> str:
-    e_turef, n_turef, turef_cm = to_turef_tm(lat, lon)
-    ed50 = to_ed50_utm(lat, lon)
-    lat_dms = to_dms(lat, is_lat=True)
-    lon_dms = to_dms(lon, is_lat=False)
-
+def coord_html(lat, lon):
+    e_t, n_t, cm = to_turef_tm(lat, lon)
+    ed = to_ed50_utm(lat, lon)
     return f"""
 <div class="coord-card">
-  <div class="coord-card-title" style="color:#4a9eff">
-    TUREF / TM{turef_cm}
-    <span class="badge badge-blue">3° dilim</span>
+  <div class="coord-title" style="color:#4a9eff">
+    TUREF / TM{cm} <span class="badge b-blue">3° dilim</span>
   </div>
-  <div class="coord-row">
-    <span class="coord-label">Doğu (E)</span>
-    <span class="coord-value">{e_turef:,.3f} m</span>
-  </div>
-  <div class="coord-row">
-    <span class="coord-label">Kuzey (N)</span>
-    <span class="coord-value">{n_turef:,.3f} m</span>
-  </div>
-  <div class="coord-row">
-    <span class="coord-label">Dilim</span>
-    <span class="coord-value">TM{turef_cm} — cm: {turef_cm}° D</span>
-  </div>
+  <div class="coord-row"><span class="coord-label">Doğu (E)</span>
+    <span class="coord-value">{e_t:,.3f} m</span></div>
+  <div class="coord-row"><span class="coord-label">Kuzey (N)</span>
+    <span class="coord-value">{n_t:,.3f} m</span></div>
+  <div class="coord-row"><span class="coord-label">Dilim</span>
+    <span class="coord-value">TM{cm} — {cm}° cm</span></div>
 </div>
-
 <div class="coord-card">
-  <div class="coord-card-title" style="color:#ff9f0a">
-    ED50 / UTM Zon {ed50.zone}
-    <span class="badge badge-orange">6° dilim</span>
+  <div class="coord-title" style="color:#ff9f0a">
+    ED50 / UTM Zon {ed.zone} <span class="badge b-orange">6° dilim</span>
   </div>
-  <div class="coord-row">
-    <span class="coord-label">Doğu (E)</span>
-    <span class="coord-value">{ed50.easting:,.3f} m</span>
-  </div>
-  <div class="coord-row">
-    <span class="coord-label">Kuzey (N)</span>
-    <span class="coord-value">{ed50.northing:,.3f} m</span>
-  </div>
-  <div class="coord-row">
-    <span class="coord-label">Zon</span>
-    <span class="coord-value">Zon {ed50.zone} — cm: {ed50.cm}° D</span>
-  </div>
+  <div class="coord-row"><span class="coord-label">Doğu (E)</span>
+    <span class="coord-value">{ed.easting:,.3f} m</span></div>
+  <div class="coord-row"><span class="coord-label">Kuzey (N)</span>
+    <span class="coord-value">{ed.northing:,.3f} m</span></div>
+  <div class="coord-row"><span class="coord-label">Zon</span>
+    <span class="coord-value">Zon {ed.zone} — {ed.cm}° cm</span></div>
 </div>
-
 <div class="coord-card">
-  <div class="coord-card-title" style="color:#34c759">
-    Coğrafi
-    <span class="badge badge-green">WGS84</span>
+  <div class="coord-title" style="color:#34c759">
+    Coğrafi <span class="badge b-green">WGS84</span>
   </div>
-  <div class="coord-row">
-    <span class="coord-label">Enlem</span>
-    <span class="coord-value">{lat:.8f}°</span>
-  </div>
+  <div class="coord-row"><span class="coord-label">Enlem</span>
+    <span class="coord-value">{lat:.8f}°</span></div>
   <div class="coord-row" style="margin-top:-4px;margin-bottom:8px">
-    <span></span><span class="coord-dms">{lat_dms}</span>
-  </div>
-  <div class="coord-row">
-    <span class="coord-label">Boylam</span>
-    <span class="coord-value">{lon:.8f}°</span>
-  </div>
+    <span></span><span class="coord-dms">{to_dms(lat, is_lat=True)}</span></div>
+  <div class="coord-row"><span class="coord-label">Boylam</span>
+    <span class="coord-value">{lon:.8f}°</span></div>
   <div class="coord-row" style="margin-top:-4px">
-    <span></span><span class="coord-dms">{lon_dms}</span>
-  </div>
-</div>
-"""
+    <span></span><span class="coord-dms">{to_dms(lon, is_lat=False)}</span></div>
+</div>"""
 
 
-# ─── Sidebar ────────────────────────────────────────────────────────────────
+# ─── SIDEBAR — sadece KML yükleme + GPS ────────────────────────────────────
 with st.sidebar:
     st.markdown("""
-    <div class="kemal-header">
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0 20px">
         <span style="font-size:32px">🌍</span>
         <div>
-            <div class="kemal-title">KeMaL</div>
-            <div class="kemal-sub">Harita Görüntüleyici</div>
+            <div style="font-size:24px;font-weight:800;letter-spacing:3px;color:#fff">KeMaL</div>
+            <div style="font-size:11px;color:#555;letter-spacing:1px">Harita Görüntüleyici</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── GPS Konumu ──────────────────────────────────────────
-    st.markdown('#### 📡 Konumum')
+    # KML yükleme
+    st.markdown('#### 📂 KML Dosyası')
+    uploaded = st.file_uploader('KML yükle', type=['kml'], label_visibility='collapsed')
+    if uploaded:
+        try:
+            feats = parse_kml(uploaded.read().decode('utf-8', errors='replace'))
+            if feats:
+                st.session_state.features = feats
+                st.session_state.file_name = uploaded.name
+                st.rerun()
+            else:
+                st.warning('Görüntülenebilir öğe bulunamadı.')
+        except Exception as e:
+            st.error(f'KML okunamadı: {e}')
 
-    gps_label = '🔵 Konumu Güncelle' if st.session_state.my_location else '📡 Konumumu Göster'
-    if st.button(gps_label, use_container_width=True):
+    if st.session_state.features:
+        st.markdown(f"""
+        <div style="background:rgba(74,158,255,.08);border:1px solid rgba(74,158,255,.2);
+                    border-radius:8px;padding:8px 12px;margin:6px 0;font-size:12px">
+            📄 <b>{st.session_state.file_name or ''}</b><br>
+            <span style="color:#4a9eff;font-weight:700">{len(st.session_state.features)}</span>
+            <span style="color:#666"> öğe</span>
+        </div>""", unsafe_allow_html=True)
+
+        # Öğe listesi
+        icons = {'Point': '📌', 'LineString': '📏', 'Polygon': '🔷'}
+        for f in st.session_state.features[:40]:
+            st.markdown(
+                f'<div class="feature-item">{icons.get(f.geometry_type,"•")} {f.name or f.geometry_type}</div>',
+                unsafe_allow_html=True)
+        if len(st.session_state.features) > 40:
+            st.caption(f'+{len(st.session_state.features)-40} öğe daha…')
+
+        if st.button('🗑 KML Temizle', use_container_width=True):
+            st.session_state.features = []
+            st.session_state.file_name = None
+            st.rerun()
+
+    st.markdown('---')
+
+    # GPS
+    st.markdown('#### 📡 Konum')
+    if st.button('🔵 Konumu Güncelle' if st.session_state.my_location else '📡 Konumumu Göster',
+                 use_container_width=True):
         st.session_state.gps_active = True
 
     if st.session_state.gps_active:
@@ -373,148 +258,54 @@ with st.sidebar:
             loc = get_geolocation()
         st.session_state.gps_active = False
         if loc and loc.get('coords'):
-            coords = loc['coords']
             st.session_state.my_location = {
-                'lat': coords['latitude'],
-                'lng': coords['longitude'],
+                'lat': loc['coords']['latitude'],
+                'lng': loc['coords']['longitude'],
             }
             st.rerun()
         else:
-            st.warning('Konum alınamadı. Tarayıcı iznini kontrol edin.')
+            st.warning('Konum alınamadı.')
 
     if st.session_state.my_location:
-        mlat = st.session_state.my_location['lat']
-        mlng = st.session_state.my_location['lng']
+        ml = st.session_state.my_location
         st.markdown(f"""
-        <div style="background:rgba(74,158,255,0.08);border:1px solid rgba(74,158,255,0.2);
+        <div style="background:rgba(74,158,255,.08);border:1px solid rgba(74,158,255,.2);
                     border-radius:8px;padding:8px 12px;margin:4px 0 8px;font-size:12px">
-            🔵 <b style="color:#4a9eff">Konum aktif</b><br>
-            <span style="color:#666;font-family:monospace">{mlat:.6f}°, {mlng:.6f}°</span>
-        </div>
-        """, unsafe_allow_html=True)
+            🔵 <b style="color:#4a9eff">Aktif</b><br>
+            <span style="color:#666;font-family:monospace">{ml['lat']:.6f}°, {ml['lng']:.6f}°</span>
+        </div>""", unsafe_allow_html=True)
         if st.button('Konumu Temizle', use_container_width=True):
             st.session_state.my_location = None
             st.rerun()
 
-    st.markdown('---')
-    st.markdown('#### KML Dosyası')
-    uploaded = st.file_uploader(
-        'KML yükle',
-        type=['kml'],
-        label_visibility='collapsed',
-    )
 
-    if uploaded:
-        try:
-            content = uploaded.read().decode('utf-8', errors='replace')
-            features = parse_kml(content)
-            if features:
-                st.session_state.features = features
-                st.session_state.file_name = uploaded.name
-                st.session_state.clicked = None
-            else:
-                st.warning('KML dosyasında görüntülenebilir öğe bulunamadı.')
-        except Exception as e:
-            st.error(f'KML okunamadı: {e}')
+# ─── ANA ALAN: harita (sol) + koordinatlar (sağ) ───────────────────────────
+col_map, col_coord = st.columns([3, 1])
 
-    if st.session_state.features:
-        fname = st.session_state.file_name or ''
-        count = len(st.session_state.features)
-        st.markdown(f"""
-        <div style="background:rgba(74,158,255,0.08);border:1px solid rgba(74,158,255,0.2);
-                    border-radius:8px;padding:8px 12px;margin:8px 0;font-size:12px">
-            📄 <b>{fname}</b><br>
-            <span style="color:#4a9eff;font-weight:700">{count}</span>
-            <span style="color:#666"> öğe yüklendi</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if st.button('🗑 Temizle', use_container_width=True):
-            st.session_state.features = []
-            st.session_state.file_name = None
-            st.session_state.clicked = None
-            st.rerun()
-
-    st.markdown('---')
-    st.markdown('#### 📍 Koordinatlar')
-    coord_placeholder = st.empty()
-    if st.session_state.clicked:
-        clat = st.session_state.clicked['lat']
-        clon = st.session_state.clicked['lng']
-        coord_placeholder.markdown(_coord_card_html(clat, clon), unsafe_allow_html=True)
-        e_t, n_t, cm_t = to_turef_tm(clat, clon)
-        ed50 = to_ed50_utm(clat, clon)
-        copy_text = (
-            f"TUREF TM{cm_t} (3° dilim)\n"
-            f"Doğu  : {e_t:.3f} m\n"
-            f"Kuzey : {n_t:.3f} m\n\n"
-            f"ED50 UTM Zon {ed50.zone} (6° dilim)\n"
-            f"Doğu  : {ed50.easting:.3f} m\n"
-            f"Kuzey : {ed50.northing:.3f} m\n\n"
-            f"Coğrafi (WGS84)\n"
-            f"Enlem  : {clat:.8f}°\n"
-            f"Boylam : {clon:.8f}°"
-        )
-        st.text_area('Kopyala', copy_text, height=180, label_visibility='collapsed')
-    else:
-        coord_placeholder.markdown("""
-        <div style="color:#444;font-size:12px;padding:12px;text-align:center;
-                    border:1px dashed #222;border-radius:8px">
-            Haritada bir noktaya tıklayın
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Öğe listesi
-    if st.session_state.features:
-        st.markdown('---')
-        st.markdown('#### Öğeler')
-        type_icons = {'Point': '📌', 'LineString': '📏', 'Polygon': '🔷'}
-        for f in st.session_state.features[:50]:
-            icon = type_icons.get(f.geometry_type, '•')
-            label = f.name or f.geometry_type
-            st.markdown(
-                f'<div class="feature-item">{icon} {label}</div>',
-                unsafe_allow_html=True
-            )
-        if len(st.session_state.features) > 50:
-            st.caption(f'+{len(st.session_state.features)-50} öğe daha…')
-
-
-# ─── Ana alan — Harita ──────────────────────────────────────────────────────
-# Harita objesi cache'lenir — sadece KML veya GPS değişince rebuild edilir.
-# Böylece koordinat tıklamalarında st.rerun() çağrılsa bile st_folium aynı
-# objeyi görür, last_clicked sıfırlanmaz.
-def _map_cache_key():
-    feats = st.session_state.features
-    loc   = st.session_state.my_location
-    fkey  = tuple((f.geometry_type, str(f.coordinates), str(f.rings)) for f in feats)
-    lkey  = (round(loc['lat'], 6), round(loc['lng'], 6)) if loc else None
-    return (fkey, lkey)
-
-cache_key = _map_cache_key()
-if st.session_state.get('_map_cache_key') != cache_key:
+with col_map:
     m = build_map(st.session_state.features, my_location=st.session_state.my_location)
-    if st.session_state.my_location and not st.session_state.features:
-        mlat = st.session_state.my_location['lat']
-        mlng = st.session_state.my_location['lng']
-        m.fit_bounds(
-            [[mlat - 0.01, mlng - 0.01], [mlat + 0.01, mlng + 0.01]],
-            max_zoom=16,
-        )
-    st.session_state._cached_map = m
-    st.session_state._map_cache_key = cache_key
+    map_data = st_folium(m, use_container_width=True, height=720,
+                         returned_objects=['last_clicked'])
 
-map_data = st_folium(
-    st.session_state._cached_map,
-    use_container_width=True,
-    height=700,
-    key='kemal_map',
-    returned_objects=['last_clicked'],
-)
-
-# ─── Tıklama: sidebar'ı güncelle ────────────────────────────────────────────
-clicked = map_data.get('last_clicked') if map_data else None
-if clicked and isinstance(clicked, dict) and 'lat' in clicked and 'lng' in clicked:
-    if st.session_state.clicked != clicked:
-        st.session_state.clicked = clicked
-        st.rerun()  # aynı map objesi → st_folium sıfırlanmaz → last_clicked korunur
+with col_coord:
+    st.markdown('#### 📍 Koordinatlar')
+    clicked = map_data.get('last_clicked') if map_data else None
+    if clicked and isinstance(clicked, dict) and 'lat' in clicked:
+        lat, lon = clicked['lat'], clicked['lng']
+        st.markdown(coord_html(lat, lon), unsafe_allow_html=True)
+        e_t, n_t, cm = to_turef_tm(lat, lon)
+        ed = to_ed50_utm(lat, lon)
+        st.text_area('', (
+            f"TUREF TM{cm} (3° dilim)\n"
+            f"Doğu  : {e_t:.3f} m\nKuzey : {n_t:.3f} m\n\n"
+            f"ED50 UTM Zon {ed.zone} (6° dilim)\n"
+            f"Doğu  : {ed.easting:.3f} m\nKuzey : {ed.northing:.3f} m\n\n"
+            f"Coğrafi (WGS84)\n"
+            f"Enlem  : {lat:.8f}°\nBoylam : {lon:.8f}°"
+        ), height=220, label_visibility='collapsed')
+    else:
+        st.markdown("""
+        <div class="hint-box">
+            🖱️ Haritada herhangi<br>bir noktaya tıklayın<br><br>
+            <span style="color:#333">TUREF · ED50 · WGS84</span>
+        </div>""", unsafe_allow_html=True)
