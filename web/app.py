@@ -2,13 +2,13 @@
 KeMaL — Web  (Streamlit + Folium)
 Google Earth benzeri satellite altlık, KML görüntüleyici, TUREF/ED50 koordinat paneli.
 """
-import io
 import folium
 import streamlit as st
 from streamlit_folium import st_folium
+from streamlit_js_eval import get_geolocation
 
 from kml_parser import parse_kml, KmlFeature
-from turef_converter import to_turef_tm, to_ed50_utm, to_dms, turef_aktif_dilim
+from turef_converter import to_turef_tm, to_ed50_utm, to_dms
 
 # ─── Sayfa ayarı ───────────────────────────────────────────────────────────
 st.set_page_config(
@@ -94,7 +94,11 @@ if 'features' not in st.session_state:
 if 'file_name' not in st.session_state:
     st.session_state.file_name = None
 if 'clicked' not in st.session_state:
-    st.session_state.clicked = None   # {'lat': ..., 'lng': ...}
+    st.session_state.clicked = None        # {'lat': ..., 'lng': ...}
+if 'my_location' not in st.session_state:
+    st.session_state.my_location = None    # {'lat': ..., 'lng': ...}
+if 'gps_active' not in st.session_state:
+    st.session_state.gps_active = False
 
 
 # ─── Yardımcılar ────────────────────────────────────────────────────────────
@@ -108,7 +112,7 @@ def hex_to_rgb(hex_color: str, opacity: float = 1.0) -> str:
     return f'rgba(255,68,68,{opacity})'
 
 
-def build_map(features: list[KmlFeature]) -> folium.Map:
+def build_map(features: list[KmlFeature], my_location: dict | None = None) -> folium.Map:
     """Folium haritası oluştur — ESRI satellite altlık."""
     # Merkez hesapla
     if features:
@@ -181,6 +185,36 @@ def build_map(features: list[KmlFeature]) -> folium.Map:
                 tooltip=f.name or f'Poligon {i+1}',
                 popup=folium.Popup(popup_html, max_width=280),
             ).add_to(m)
+
+    # ── Kullanıcı konumu ──
+    if my_location:
+        ulat = my_location['lat']
+        ulon = my_location['lng']
+        # Mavi dolu daire + doğruluk halkası
+        folium.CircleMarker(
+            location=[ulat, ulon],
+            radius=10,
+            color='#ffffff',
+            weight=2,
+            fill=True,
+            fill_color='#4a9eff',
+            fill_opacity=1.0,
+            tooltip='Konumunuz',
+            popup=folium.Popup(
+                f'<b>Konumunuz</b><br>{ulat:.6f}°, {ulon:.6f}°',
+                max_width=200,
+            ),
+            zIndexOffset=1000,
+        ).add_to(m)
+        folium.CircleMarker(
+            location=[ulat, ulon],
+            radius=22,
+            color='#4a9eff',
+            weight=1.5,
+            fill=True,
+            fill_color='#4a9eff',
+            fill_opacity=0.15,
+        ).add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
 
@@ -278,6 +312,42 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    # ── GPS Konumu ──────────────────────────────────────────
+    st.markdown('#### 📡 Konumum')
+
+    gps_label = '🔵 Konumu Güncelle' if st.session_state.my_location else '📡 Konumumu Göster'
+    if st.button(gps_label, use_container_width=True):
+        st.session_state.gps_active = True
+
+    if st.session_state.gps_active:
+        with st.spinner('Konum alınıyor…'):
+            loc = get_geolocation()
+        st.session_state.gps_active = False
+        if loc and loc.get('coords'):
+            coords = loc['coords']
+            st.session_state.my_location = {
+                'lat': coords['latitude'],
+                'lng': coords['longitude'],
+            }
+            st.rerun()
+        else:
+            st.warning('Konum alınamadı. Tarayıcı iznini kontrol edin.')
+
+    if st.session_state.my_location:
+        mlat = st.session_state.my_location['lat']
+        mlng = st.session_state.my_location['lng']
+        st.markdown(f"""
+        <div style="background:rgba(74,158,255,0.08);border:1px solid rgba(74,158,255,0.2);
+                    border-radius:8px;padding:8px 12px;margin:4px 0 8px;font-size:12px">
+            🔵 <b style="color:#4a9eff">Konum aktif</b><br>
+            <span style="color:#666;font-family:monospace">{mlat:.6f}°, {mlng:.6f}°</span>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button('Konumu Temizle', use_container_width=True):
+            st.session_state.my_location = None
+            st.rerun()
+
+    st.markdown('---')
     st.markdown('#### KML Dosyası')
     uploaded = st.file_uploader(
         'KML yükle',
@@ -370,7 +440,14 @@ with st.sidebar:
 
 
 # ─── Ana alan — Harita ──────────────────────────────────────────────────────
-m = build_map(st.session_state.features)
+m = build_map(st.session_state.features, my_location=st.session_state.my_location)
+
+# Konum varsa haritayı oraya ortala
+if st.session_state.my_location and not st.session_state.features:
+    mlat = st.session_state.my_location['lat']
+    mlng = st.session_state.my_location['lng']
+    m.location = [mlat, mlng]
+    m.zoom_start = 15
 
 map_data = st_folium(
     m,
