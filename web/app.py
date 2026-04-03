@@ -6,9 +6,42 @@ import folium
 import streamlit as st
 from streamlit_folium import st_folium
 from streamlit_js_eval import get_geolocation
+from branca.element import MacroElement
+from jinja2 import Template
 
 from kml_parser import parse_kml, KmlFeature
 from turef_converter import to_turef_tm, to_ed50_utm, to_dms
+
+
+class LayerClickPropagator(MacroElement):
+    """
+    Tüm vektör layer tıklamalarını harita click eventine yönlendirir.
+    Bu sayede st_folium'un last_clicked değeri polygon/polyline
+    tıklamalarında da güncellenir.
+    """
+    _template = Template(u"""
+        {% macro script(this, kwargs) %}
+        (function() {
+            var mapObj = {{ this._parent.get_name() }};
+            function propagate(layer) {
+                if (typeof layer.on === 'function') {
+                    layer.on('click', function(e) {
+                        mapObj.fire('click', {
+                            latlng: e.latlng,
+                            originalEvent: e.originalEvent
+                        });
+                    });
+                }
+            }
+            mapObj.eachLayer(propagate);
+            mapObj.on('layeradd', function(e) { propagate(e.layer); });
+        })();
+        {% endmacro %}
+    """)
+
+    def __init__(self):
+        super().__init__()
+        self._name = 'LayerClickPropagator'
 
 # ─── Sayfa ayarı ───────────────────────────────────────────────────────────
 st.set_page_config(
@@ -227,6 +260,8 @@ def build_map(features: list[KmlFeature], my_location: dict | None = None) -> fo
         ).add_to(m)
 
     folium.LayerControl(collapsed=False).add_to(m)
+    # Layer tıklamalarını harita click eventine yönlendir
+    LayerClickPropagator().add_to(m)
 
     return m
 
