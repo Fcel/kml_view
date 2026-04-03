@@ -210,13 +210,12 @@ with st.sidebar:
     # KML yükleme
     st.markdown('#### 📂 KML Dosyası')
     uploaded = st.file_uploader('KML yükle', type=['kml'], label_visibility='collapsed')
-    if uploaded:
+    if uploaded and uploaded.name != st.session_state.file_name:
         try:
             feats = parse_kml(uploaded.read().decode('utf-8', errors='replace'))
             if feats:
                 st.session_state.features = feats
                 st.session_state.file_name = uploaded.name
-                st.rerun()
             else:
                 st.warning('Görüntülenebilir öğe bulunamadı.')
         except Exception as e:
@@ -262,7 +261,6 @@ with st.sidebar:
                 'lat': loc['coords']['latitude'],
                 'lng': loc['coords']['longitude'],
             }
-            st.rerun()
         else:
             st.warning('Konum alınamadı.')
 
