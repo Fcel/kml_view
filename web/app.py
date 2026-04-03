@@ -187,13 +187,14 @@ def build_map(features: list[KmlFeature], my_location: dict | None = None) -> fo
                 fill_opacity=f.style.fill_opacity,
                 tooltip=f.name or f'Poligon {i+1}',
                 popup=folium.Popup(popup_html, max_width=280),
+                # consumeTapEvents=False → tıklama harita click eventine ulaşır
             ).add_to(m)
 
-    # ── KML alanına zoom ──
+    # ── KML alanına zoom (max 17 — altlık kaybolmasın) ──
     if features:
         bounds = _kml_bounds(features)
         if bounds:
-            m.fit_bounds(bounds, padding=(40, 40))
+            m.fit_bounds(bounds, padding=(50, 50), max_zoom=17)
 
     # ── Kullanıcı konumu ──
     if my_location:
@@ -455,19 +456,22 @@ m = build_map(st.session_state.features, my_location=st.session_state.my_locatio
 if st.session_state.my_location and not st.session_state.features:
     mlat = st.session_state.my_location['lat']
     mlng = st.session_state.my_location['lng']
-    m.fit_bounds([[mlat - 0.01, mlng - 0.01], [mlat + 0.01, mlng + 0.01]])
+    m.fit_bounds(
+        [[mlat - 0.01, mlng - 0.01], [mlat + 0.01, mlng + 0.01]],
+        max_zoom=16,
+    )
 
 map_data = st_folium(
     m,
     use_container_width=True,
     height=700,
-    returned_objects=['last_clicked'],
+    returned_objects=['last_clicked', 'last_object_clicked_tooltip'],
 )
 
-# Tıklama koordinatını al
-if map_data and map_data.get('last_clicked'):
-    clicked = map_data['last_clicked']
-    if clicked and {'lat', 'lng'} <= clicked.keys():
+# Tıklama koordinatını al — haritanın boş alanına tıklama
+if map_data:
+    clicked = map_data.get('last_clicked')
+    if clicked and isinstance(clicked, dict) and 'lat' in clicked and 'lng' in clicked:
         if st.session_state.clicked != clicked:
             st.session_state.clicked = clicked
             st.rerun()
