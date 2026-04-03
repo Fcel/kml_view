@@ -182,8 +182,6 @@ def build_map(features: list[KmlFeature]) -> folium.Map:
                 popup=folium.Popup(popup_html, max_width=280),
             ).add_to(m)
 
-    # Tıklama koordinatı popup
-    m.add_child(folium.ClickForLatLng())
     folium.LayerControl(collapsed=False).add_to(m)
 
     return m
