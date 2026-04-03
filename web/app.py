@@ -433,12 +433,32 @@ with st.sidebar:
 
     st.markdown('---')
     st.markdown('#### 📍 Koordinatlar')
-    st.markdown("""
-    <div style="color:#444;font-size:12px;padding:12px;text-align:center;
-                border:1px dashed #222;border-radius:8px">
-        Haritada bir noktaya tıklayın
-    </div>
-    """, unsafe_allow_html=True)
+    coord_placeholder = st.empty()
+    if st.session_state.clicked:
+        clat = st.session_state.clicked['lat']
+        clon = st.session_state.clicked['lng']
+        coord_placeholder.markdown(_coord_card_html(clat, clon), unsafe_allow_html=True)
+        e_t, n_t, cm_t = to_turef_tm(clat, clon)
+        ed50 = to_ed50_utm(clat, clon)
+        copy_text = (
+            f"TUREF TM{cm_t} (3° dilim)\n"
+            f"Doğu  : {e_t:.3f} m\n"
+            f"Kuzey : {n_t:.3f} m\n\n"
+            f"ED50 UTM Zon {ed50.zone} (6° dilim)\n"
+            f"Doğu  : {ed50.easting:.3f} m\n"
+            f"Kuzey : {ed50.northing:.3f} m\n\n"
+            f"Coğrafi (WGS84)\n"
+            f"Enlem  : {clat:.8f}°\n"
+            f"Boylam : {clon:.8f}°"
+        )
+        st.text_area('Kopyala', copy_text, height=180, label_visibility='collapsed')
+    else:
+        coord_placeholder.markdown("""
+        <div style="color:#444;font-size:12px;padding:12px;text-align:center;
+                    border:1px dashed #222;border-radius:8px">
+            Haritada bir noktaya tıklayın
+        </div>
+        """, unsafe_allow_html=True)
 
     # Öğe listesi
     if st.session_state.features:
@@ -475,30 +495,9 @@ map_data = st_folium(
     returned_objects=['last_clicked'],
 )
 
-# ─── Koordinat paneli — haritanın hemen altında ─────────────────────────────
+# ─── Tıklama eventini yakala → sidebar'ı güncelle ───────────────────────────
 clicked = map_data.get('last_clicked') if map_data else None
 if clicked and isinstance(clicked, dict) and 'lat' in clicked and 'lng' in clicked:
-    # session_state'i güncelle (sidebar hint için)
-    st.session_state.clicked = clicked
-    lat = clicked['lat']
-    lon = clicked['lng']
-
-    st.markdown('---')
-    st.markdown('### 📍 Nokta Koordinatları')
-    st.markdown(_coord_card_html(lat, lon), unsafe_allow_html=True)
-
-    # Kopyalama alanı
-    e_t, n_t, cm_t = to_turef_tm(lat, lon)
-    ed50 = to_ed50_utm(lat, lon)
-    copy_text = (
-        f"TUREF TM{cm_t} (3° dilim)\n"
-        f"Doğu  : {e_t:.3f} m\n"
-        f"Kuzey : {n_t:.3f} m\n\n"
-        f"ED50 UTM Zon {ed50.zone} (6° dilim)\n"
-        f"Doğu  : {ed50.easting:.3f} m\n"
-        f"Kuzey : {ed50.northing:.3f} m\n\n"
-        f"Coğrafi (WGS84)\n"
-        f"Enlem  : {lat:.8f}°\n"
-        f"Boylam : {lon:.8f}°"
-    )
-    st.text_area('Kopyala', copy_text, height=200, label_visibility='collapsed')
+    if st.session_state.clicked != clicked:
+        st.session_state.clicked = clicked
+        st.rerun()   # key='kemal_map' sayesinde map state korunur
