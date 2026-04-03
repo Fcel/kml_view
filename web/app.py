@@ -112,22 +112,25 @@ def hex_to_rgb(hex_color: str, opacity: float = 1.0) -> str:
     return f'rgba(255,68,68,{opacity})'
 
 
+def _kml_bounds(features: list[KmlFeature]):
+    """Tüm feature'lardan bounding box hesapla → [[min_lat,min_lon],[max_lat,max_lon]]"""
+    all_lats, all_lons = [], []
+    for f in features:
+        pts = f.coordinates[:]
+        for ring in f.rings:
+            pts += ring
+        for lon, lat in pts:
+            all_lats.append(lat); all_lons.append(lon)
+    if not all_lats:
+        return None
+    return [[min(all_lats), min(all_lons)], [max(all_lats), max(all_lons)]]
+
+
 def build_map(features: list[KmlFeature], my_location: dict | None = None) -> folium.Map:
     """Folium haritası oluştur — ESRI satellite altlık."""
-    # Merkez hesapla
-    if features:
-        all_lats, all_lons = [], []
-        for f in features:
-            pts = f.coordinates or (f.rings[0] if f.rings else [])
-            for lon, lat in pts:
-                all_lats.append(lat); all_lons.append(lon)
-        center = [sum(all_lats)/len(all_lats), sum(all_lons)/len(all_lons)]
-    else:
-        center = [39.0, 35.0]
-
     m = folium.Map(
-        location=center,
-        zoom_start=7 if features else 6,
+        location=[39.0, 35.0],
+        zoom_start=6,
         tiles=None,
         prefer_canvas=True,
     )
@@ -185,6 +188,12 @@ def build_map(features: list[KmlFeature], my_location: dict | None = None) -> fo
                 tooltip=f.name or f'Poligon {i+1}',
                 popup=folium.Popup(popup_html, max_width=280),
             ).add_to(m)
+
+    # ── KML alanına zoom ──
+    if features:
+        bounds = _kml_bounds(features)
+        if bounds:
+            m.fit_bounds(bounds, padding=(40, 40))
 
     # ── Kullanıcı konumu ──
     if my_location:
@@ -442,12 +451,11 @@ with st.sidebar:
 # ─── Ana alan — Harita ──────────────────────────────────────────────────────
 m = build_map(st.session_state.features, my_location=st.session_state.my_location)
 
-# Konum varsa haritayı oraya ortala
+# KML yoksa GPS konumuna zoom yap
 if st.session_state.my_location and not st.session_state.features:
     mlat = st.session_state.my_location['lat']
     mlng = st.session_state.my_location['lng']
-    m.location = [mlat, mlng]
-    m.zoom_start = 15
+    m.fit_bounds([[mlat - 0.01, mlng - 0.01], [mlat + 0.01, mlng + 0.01]])
 
 map_data = st_folium(
     m,
