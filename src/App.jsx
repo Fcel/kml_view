@@ -7,11 +7,13 @@ const LIBRARIES = ['places']
 
 const MAP_OPTIONS = {
   mapTypeId: 'satellite',
-  mapTypeControl: true,
+  mapTypeControl: false,
   streetViewControl: false,
-  fullscreenControl: true,
-  zoomControl: true,
+  fullscreenControl: false,
+  zoomControl: false,
   tilt: 0,
+  gestureHandling: 'greedy',
+  clickableIcons: false,
 }
 
 const DEFAULT_CENTER = { lat: 39.0, lng: 35.0 }
@@ -19,7 +21,6 @@ const DEFAULT_ZOOM = 6
 
 function parseKmlColor(colorStr) {
   if (!colorStr || colorStr.length < 6) return null
-  // KML color format: aabbggrr
   if (colorStr.length === 8) {
     const a = parseInt(colorStr.slice(0, 2), 16) / 255
     const b = parseInt(colorStr.slice(2, 4), 16)
@@ -34,10 +35,8 @@ function getFeatureStyle(feature) {
   const style = feature.properties?.style || {}
   const lineStyle = style.LineStyle || {}
   const polyStyle = style.PolyStyle || {}
-
   const strokeColor = parseKmlColor(lineStyle.color)
   const fillColor = parseKmlColor(polyStyle.color)
-
   return {
     strokeColor: strokeColor?.hex || '#FF4444',
     strokeOpacity: strokeColor?.opacity ?? 0.9,
@@ -56,14 +55,12 @@ function Feature({ feature, onClick }) {
   const style = getFeatureStyle(feature)
   const geom = feature.geometry
   if (!geom) return null
-
   const handleClick = () => onClick(feature)
 
   if (geom.type === 'Point') {
     const [lng, lat] = geom.coordinates
     return <Marker position={{ lat, lng }} onClick={handleClick} />
   }
-
   if (geom.type === 'LineString') {
     return (
       <Polyline
@@ -73,70 +70,43 @@ function Feature({ feature, onClick }) {
       />
     )
   }
-
   if (geom.type === 'MultiLineString') {
     return geom.coordinates.map((line, i) => (
-      <Polyline
-        key={i}
-        path={coordsToLatLng(line)}
+      <Polyline key={i} path={coordsToLatLng(line)}
         options={{ strokeColor: style.strokeColor, strokeOpacity: style.strokeOpacity, strokeWeight: style.strokeWeight }}
-        onClick={handleClick}
-      />
+        onClick={handleClick} />
     ))
   }
-
   if (geom.type === 'Polygon') {
     return (
       <Polygon
         paths={geom.coordinates.map(ring => coordsToLatLng(ring))}
-        options={{
-          strokeColor: style.strokeColor,
-          strokeOpacity: style.strokeOpacity,
-          strokeWeight: style.strokeWeight,
-          fillColor: style.fillColor,
-          fillOpacity: style.fillOpacity,
-        }}
+        options={{ strokeColor: style.strokeColor, strokeOpacity: style.strokeOpacity, strokeWeight: style.strokeWeight, fillColor: style.fillColor, fillOpacity: style.fillOpacity }}
         onClick={handleClick}
       />
     )
   }
-
   if (geom.type === 'MultiPolygon') {
     return geom.coordinates.map((poly, i) => (
-      <Polygon
-        key={i}
-        paths={poly.map(ring => coordsToLatLng(ring))}
-        options={{
-          strokeColor: style.strokeColor,
-          strokeOpacity: style.strokeOpacity,
-          strokeWeight: style.strokeWeight,
-          fillColor: style.fillColor,
-          fillOpacity: style.fillOpacity,
-        }}
-        onClick={handleClick}
-      />
+      <Polygon key={i} paths={poly.map(ring => coordsToLatLng(ring))}
+        options={{ strokeColor: style.strokeColor, strokeOpacity: style.strokeOpacity, strokeWeight: style.strokeWeight, fillColor: style.fillColor, fillOpacity: style.fillOpacity }}
+        onClick={handleClick} />
     ))
   }
-
   if (geom.type === 'GeometryCollection') {
     return geom.geometries.map((subGeom, i) => (
       <Feature key={i} feature={{ ...feature, geometry: subGeom }} onClick={onClick} />
     ))
   }
-
   return null
 }
 
 function getFeatureCenter(feature) {
   const geom = feature.geometry
   if (!geom) return null
-  if (geom.type === 'Point') {
-    const [lng, lat] = geom.coordinates
-    return { lat, lng }
-  }
+  if (geom.type === 'Point') { const [lng, lat] = geom.coordinates; return { lat, lng } }
   if (geom.type === 'LineString' && geom.coordinates.length > 0) {
-    const mid = Math.floor(geom.coordinates.length / 2)
-    const [lng, lat] = geom.coordinates[mid]
+    const [lng, lat] = geom.coordinates[Math.floor(geom.coordinates.length / 2)]
     return { lat, lng }
   }
   if (geom.type === 'Polygon' && geom.coordinates[0]?.length > 0) {
@@ -170,14 +140,11 @@ export default function App() {
     const bounds = new window.google.maps.LatLngBounds()
     const extend = (coords) => {
       if (!coords) return
-      if (typeof coords[0] === 'number') {
-        bounds.extend({ lat: coords[1], lng: coords[0] })
-      } else {
-        coords.forEach(extend)
-      }
+      if (typeof coords[0] === 'number') bounds.extend({ lat: coords[1], lng: coords[0] })
+      else coords.forEach(extend)
     }
     featureList.forEach(f => f.geometry && extend(f.geometry.coordinates))
-    if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 60)
+    if (!bounds.isEmpty()) mapRef.current.fitBounds(bounds, 40)
   }, [])
 
   const processKML = useCallback((text, name) => {
@@ -185,10 +152,9 @@ export default function App() {
     try {
       const parser = new DOMParser()
       const doc = parser.parseFromString(text, 'text/xml')
-      const parseErr = doc.querySelector('parsererror')
-      if (parseErr) throw new Error('Geçersiz XML formatı')
+      if (doc.querySelector('parsererror')) throw new Error('Geçersiz XML formatı')
       const geojson = kml(doc)
-      if (!geojson.features || geojson.features.length === 0) {
+      if (!geojson.features?.length) {
         setError('KML dosyasında görüntülenebilir öğe bulunamadı.')
         return
       }
@@ -203,10 +169,7 @@ export default function App() {
 
   const handleFile = useCallback((file) => {
     if (!file) return
-    if (!file.name.match(/\.kml$/i)) {
-      setError('Lütfen .kml uzantılı bir dosya seçin.')
-      return
-    }
+    if (!file.name.match(/\.kml$/i)) { setError('Lütfen .kml uzantılı bir dosya seçin.'); return }
     const reader = new FileReader()
     reader.onload = (e) => processKML(e.target.result, file.name)
     reader.onerror = () => setError('Dosya okunamadı.')
@@ -224,9 +187,7 @@ export default function App() {
       <div className="error-screen">
         <div className="error-screen-icon">🗺️</div>
         <h2>Google Maps yüklenemedi</h2>
-        <p>
-          <code>VITE_GOOGLE_MAPS_API_KEY</code> ortam değişkenini kontrol edin.
-        </p>
+        <p><code>VITE_GOOGLE_MAPS_API_KEY</code> ortam değişkenini kontrol edin.</p>
         <p className="error-detail">{loadError.message}</p>
       </div>
     )
@@ -249,17 +210,17 @@ export default function App() {
           <h1 className="app-title">KML Görüntüleyici</h1>
         </div>
         <div className="header-right">
-          {fileName && (
+          {fileName ? (
             <div className="file-badge">
-              <span className="file-icon">📄</span>
               <span className="file-name">{fileName}</span>
-              <span className="feature-count">{features.length} öğe</span>
+              <span className="feature-count">{features.length}</span>
               <button className="clear-btn" onClick={clearKML} title="Temizle">✕</button>
             </div>
-          )}
+          ) : null}
           <label className={`upload-btn${isDragging ? ' dragging' : ''}`} onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}>
             <input type="file" accept=".kml" onChange={onFileInput} style={{ display: 'none' }} />
-            📂 KML Yükle
+            <span className="upload-icon">📂</span>
+            <span className="upload-text">KML Yükle</span>
           </label>
         </div>
       </header>
@@ -273,16 +234,11 @@ export default function App() {
 
       <div className="map-wrapper">
         {features.length === 0 && !error && (
-          <div
-            className={`drop-overlay${isDragging ? ' dragging' : ''}`}
-            onDrop={onDrop}
-            onDragOver={onDragOver}
-            onDragLeave={onDragLeave}
-          >
+          <div className={`drop-overlay${isDragging ? ' dragging' : ''}`} onDrop={onDrop} onDragOver={onDragOver} onDragLeave={onDragLeave}>
             <div className="drop-content">
               <div className="drop-icon">📂</div>
-              <p className="drop-title">KML dosyasını buraya sürükleyin</p>
-              <p className="drop-or">veya</p>
+              <p className="drop-title">KML dosyanızı yükleyin</p>
+              <p className="drop-sub">Sürükleyin veya dosya seçin</p>
               <label className="upload-btn-large">
                 <input type="file" accept=".kml" onChange={onFileInput} style={{ display: 'none' }} />
                 Dosya Seç
@@ -310,15 +266,22 @@ export default function App() {
               <InfoWindow position={pos} onCloseClick={() => setSelected(null)}>
                 <div className="info-window">
                   {props.name && <h3>{props.name}</h3>}
-                  {props.description && (
-                    <div className="info-desc" dangerouslySetInnerHTML={{ __html: props.description }} />
-                  )}
+                  {props.description && <div className="info-desc" dangerouslySetInnerHTML={{ __html: props.description }} />}
                   {!props.name && !props.description && <p className="info-empty">Özellik bilgisi yok</p>}
                 </div>
               </InfoWindow>
             )
           })()}
         </GoogleMap>
+
+        {/* Mobil harita kontrolleri */}
+        <div className="map-controls">
+          <button className="map-ctrl-btn" onClick={() => mapRef.current?.setZoom((mapRef.current.getZoom() || 6) + 1)}>+</button>
+          <button className="map-ctrl-btn" onClick={() => mapRef.current?.setZoom((mapRef.current.getZoom() || 6) - 1)}>−</button>
+          {features.length > 0 && (
+            <button className="map-ctrl-btn fit-btn" onClick={() => fitBoundsToFeatures(features)} title="Tümünü göster">⊙</button>
+          )}
+        </div>
       </div>
     </div>
   )
