@@ -127,11 +127,15 @@ if 'features' not in st.session_state:
 if 'file_name' not in st.session_state:
     st.session_state.file_name = None
 if 'clicked' not in st.session_state:
-    st.session_state.clicked = None        # {'lat': ..., 'lng': ...}
+    st.session_state.clicked = None
 if 'my_location' not in st.session_state:
-    st.session_state.my_location = None    # {'lat': ..., 'lng': ...}
+    st.session_state.my_location = None
 if 'gps_active' not in st.session_state:
     st.session_state.gps_active = False
+if '_cached_map' not in st.session_state:
+    st.session_state._cached_map = None
+if '_map_cache_key' not in st.session_state:
+    st.session_state._map_cache_key = None
 
 
 # ─── Yardımcılar ────────────────────────────────────────────────────────────
@@ -477,27 +481,40 @@ with st.sidebar:
 
 
 # ─── Ana alan — Harita ──────────────────────────────────────────────────────
-m = build_map(st.session_state.features, my_location=st.session_state.my_location)
+# Harita objesi cache'lenir — sadece KML veya GPS değişince rebuild edilir.
+# Böylece koordinat tıklamalarında st.rerun() çağrılsa bile st_folium aynı
+# objeyi görür, last_clicked sıfırlanmaz.
+def _map_cache_key():
+    feats = st.session_state.features
+    loc   = st.session_state.my_location
+    fkey  = tuple((f.geometry_type, str(f.coordinates), str(f.rings)) for f in feats)
+    lkey  = (round(loc['lat'], 6), round(loc['lng'], 6)) if loc else None
+    return (fkey, lkey)
 
-if st.session_state.my_location and not st.session_state.features:
-    mlat = st.session_state.my_location['lat']
-    mlng = st.session_state.my_location['lng']
-    m.fit_bounds(
-        [[mlat - 0.01, mlng - 0.01], [mlat + 0.01, mlng + 0.01]],
-        max_zoom=16,
-    )
+cache_key = _map_cache_key()
+if st.session_state.get('_map_cache_key') != cache_key:
+    m = build_map(st.session_state.features, my_location=st.session_state.my_location)
+    if st.session_state.my_location and not st.session_state.features:
+        mlat = st.session_state.my_location['lat']
+        mlng = st.session_state.my_location['lng']
+        m.fit_bounds(
+            [[mlat - 0.01, mlng - 0.01], [mlat + 0.01, mlng + 0.01]],
+            max_zoom=16,
+        )
+    st.session_state._cached_map = m
+    st.session_state._map_cache_key = cache_key
 
 map_data = st_folium(
-    m,
+    st.session_state._cached_map,
     use_container_width=True,
     height=700,
-    key='kemal_map',                        # sabit key → component state korunur
+    key='kemal_map',
     returned_objects=['last_clicked'],
 )
 
-# ─── Tıklama eventini yakala → sidebar'ı güncelle ───────────────────────────
+# ─── Tıklama: sidebar'ı güncelle ────────────────────────────────────────────
 clicked = map_data.get('last_clicked') if map_data else None
 if clicked and isinstance(clicked, dict) and 'lat' in clicked and 'lng' in clicked:
     if st.session_state.clicked != clicked:
         st.session_state.clicked = clicked
-        st.rerun()   # key='kemal_map' sayesinde map state korunur
+        st.rerun()  # aynı map objesi → st_folium sıfırlanmaz → last_clicked korunur
