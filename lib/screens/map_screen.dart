@@ -9,6 +9,7 @@ import '../models/kml_feature.dart';
 import '../services/kml_parser.dart';
 import '../services/location_service.dart';
 import '../widgets/info_bottom_sheet.dart';
+import '../widgets/koordinat_panel.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -34,6 +35,9 @@ class _MapScreenState extends State<MapScreen> {
 
   // Paylaşım
   StreamSubscription? _sharingIntentSub;
+
+  // Koordinat paneli
+  LatLng? _tiklananNokta;
 
   static const _initialCamera = CameraPosition(
     target: LatLng(39.0, 35.0),
@@ -123,6 +127,10 @@ class _MapScreenState extends State<MapScreen> {
       _polylines.clear();
       _polygons.clear();
     });
+  }
+
+  void _onMapTap(LatLng nokta) {
+    setState(() => _tiklananNokta = nokta);
   }
 
   // ─── Harita Overlay ──────────────────────────────────────
@@ -294,6 +302,7 @@ class _MapScreenState extends State<MapScreen> {
             compassEnabled: true,
             rotateGesturesEnabled: true,
             tiltGesturesEnabled: false,
+            onTap: _onMapTap,
             onMapCreated: (ctrl) {
               _mapController = ctrl;
               if (_features.isNotEmpty) _fitBounds();
@@ -314,6 +323,18 @@ class _MapScreenState extends State<MapScreen> {
             bottom: 40,
             child: _buildSideControls(),
           ),
+
+          // Koordinat paneli — haritaya tıklanınca
+          if (_tiklananNokta != null)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: KoordinatPanel(
+                nokta: _tiklananNokta!,
+                onKapat: () => setState(() => _tiklananNokta = null),
+              ),
+            ),
 
           // Başlangıç ekranı — KML yüklenmemişse
           if (_features.isEmpty)
