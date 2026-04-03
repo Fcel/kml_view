@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import '../models/kml_feature.dart';
 import '../services/kml_parser.dart';
 import '../services/location_service.dart';
@@ -30,19 +32,57 @@ class _MapScreenState extends State<MapScreen> {
   bool _trackingEnabled = false;
   bool _locationLoading = false;
 
+  // Paylaşım
+  StreamSubscription? _sharingIntentSub;
+
   static const _initialCamera = CameraPosition(
     target: LatLng(39.0, 35.0),
     zoom: 6,
   );
 
   @override
+  void initState() {
+    super.initState();
+    _initSharingIntent();
+  }
+
+  @override
   void dispose() {
     _locationSub?.cancel();
+    _sharingIntentSub?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
 
-  // ─── KML Yükle ───────────────────────────────────────────
+  // ─── WhatsApp / Paylaşım Intent ──────────────────────────
+  void _initSharingIntent() {
+    // Uygulama kapalıyken gelen dosya (cold start)
+    ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+      _handleSharedFiles(files);
+    });
+
+    // Uygulama açıkken gelen dosya (warm start)
+    _sharingIntentSub = ReceiveSharingIntent.instance.getMediaStream().listen(
+      (files) => _handleSharedFiles(files),
+    );
+  }
+
+  void _handleSharedFiles(List<SharedMediaFile> files) {
+    if (files.isEmpty) return;
+    final file = files.first;
+    final path = file.path;
+    if (path.isEmpty) return;
+
+    try {
+      final content = File(path).readAsStringSync();
+      final name = path.split('/').last.split('\\').last;
+      _loadKmlContent(content, name);
+    } catch (e) {
+      if (mounted) _showSnack('Dosya okunamadı: $e');
+    }
+  }
+
+  // ─── KML Yükle (manuel seçim) ────────────────────────────
   Future<void> _pickKmlFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -53,8 +93,10 @@ class _MapScreenState extends State<MapScreen> {
     final file = result.files.first;
     final bytes = file.bytes;
     if (bytes == null) return;
+    _loadKmlContent(String.fromCharCodes(bytes), file.name);
+  }
 
-    final content = String.fromCharCodes(bytes);
+  void _loadKmlContent(String content, String name) {
     try {
       final features = KmlParser.parse(content);
       if (!mounted) return;
@@ -64,10 +106,10 @@ class _MapScreenState extends State<MapScreen> {
       }
       setState(() {
         _features = features;
-        _fileName = file.name;
+        _fileName = name;
       });
       _buildMapOverlays();
-      _fitBounds();
+      Future.delayed(const Duration(milliseconds: 300), _fitBounds);
     } catch (e) {
       if (mounted) _showSnack('KML okunamadı: $e');
     }
@@ -77,7 +119,7 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _features = [];
       _fileName = null;
-      _markers.clear();
+      _markers.removeWhere((m) => m.markerId.value != 'my_location');
       _polylines.clear();
       _polygons.clear();
     });
@@ -103,9 +145,7 @@ class _MapScreenState extends State<MapScreen> {
             position: f.points.first,
             infoWindow: InfoWindow(
               title: f.name ?? 'Özellik',
-              snippet: f.description != null
-                  ? _stripHtml(f.description!)
-                  : null,
+              snippet: f.description != null ? _stripHtml(f.description!) : null,
             ),
           ));
 
@@ -165,21 +205,18 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _toggleTracking() async {
     if (_trackingEnabled) {
       _locationSub?.cancel();
-      setState(() { _trackingEnabled = false; });
+      setState(() => _trackingEnabled = false);
       return;
     }
-
-    setState(() { _locationLoading = true; });
+    setState(() => _locationLoading = true);
     final granted = await LocationService.requestPermission();
     if (!granted) {
       if (mounted) {
-        setState(() { _locationLoading = false; });
+        setState(() => _locationLoading = false);
         _showSnack('Konum izni verilmedi.');
       }
       return;
     }
-
-    // İlk konum
     final pos = await LocationService.getCurrentPosition();
     if (!mounted) return;
     if (pos != null) {
@@ -187,13 +224,10 @@ class _MapScreenState extends State<MapScreen> {
       _updateMyLocation(latlng);
       _mapController?.animateCamera(CameraUpdate.newLatLngZoom(latlng, 15));
     }
-
-    // Sürekli takip
     _locationSub = LocationService.trackPosition().listen((pos) {
       if (!mounted) return;
       _updateMyLocation(LatLng(pos.latitude, pos.longitude));
     });
-
     setState(() { _trackingEnabled = true; _locationLoading = false; });
   }
 
@@ -219,15 +253,12 @@ class _MapScreenState extends State<MapScreen> {
   // ─── Yardımcılar ─────────────────────────────────────────
   Color _hexToColor(String hex) {
     final clean = hex.replaceAll('#', '');
-    if (clean.length == 6) {
-      return Color(int.parse('FF$clean', radix: 16));
-    }
+    if (clean.length == 6) return Color(int.parse('FF$clean', radix: 16));
     return const Color(0xFFFF4444);
   }
 
-  String _stripHtml(String html) {
-    return html.replaceAll(RegExp(r'<[^>]+>'), '').trim();
-  }
+  String _stripHtml(String html) =>
+      html.replaceAll(RegExp(r'<[^>]+>'), '').trim();
 
   void _showSnack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -269,7 +300,7 @@ class _MapScreenState extends State<MapScreen> {
             },
           ),
 
-          // ─── Üst Bar ───
+          // Üst Bar
           Positioned(
             top: MediaQuery.of(context).padding.top + 8,
             left: 12,
@@ -277,13 +308,80 @@ class _MapScreenState extends State<MapScreen> {
             child: _buildTopBar(),
           ),
 
-          // ─── Sağ Kontroller ───
+          // Sağ Kontroller
           Positioned(
             right: 12,
             bottom: 40,
             child: _buildSideControls(),
           ),
+
+          // Başlangıç ekranı — KML yüklenmemişse
+          if (_features.isEmpty)
+            Positioned.fill(
+              child: _buildWelcomeOverlay(),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeOverlay() {
+    return IgnorePointer(
+      ignoring: false,
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.55),
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              color: const Color(0xF00A0A18),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('🌍', style: TextStyle(fontSize: 52)),
+                const SizedBox(height: 12),
+                const Text(
+                  'KeMaL',
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 2),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Harita Görüntüleyici',
+                  style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.5), letterSpacing: 1),
+                ),
+                const SizedBox(height: 28),
+                GestureDetector(
+                  onTap: _pickKmlFile,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF4A9EFF),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.folder_open, color: Colors.white, size: 20),
+                        SizedBox(width: 8),
+                        Text('KML Dosyası Seç', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'veya WhatsApp\'tan bir .kml dosyası paylaşın',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.45), height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -299,57 +397,54 @@ class _MapScreenState extends State<MapScreen> {
       child: Row(
         children: [
           const SizedBox(width: 12),
-          const Text('🌍', style: TextStyle(fontSize: 20)),
+          const Text('🌍', style: TextStyle(fontSize: 18)),
           const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _fileName ?? 'KML Görüntüleyici',
-              style: TextStyle(
-                color: _fileName != null ? Colors.white : Colors.white70,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
+          const Text('KeMaL', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
+          const SizedBox(width: 8),
+          if (_fileName != null) ...[
+            Container(width: 1, height: 20, color: Colors.white12),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _fileName!,
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
               ),
-              overflow: TextOverflow.ellipsis,
             ),
-          ),
-          if (_features.isNotEmpty) ...[
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
               decoration: BoxDecoration(
                 color: const Color(0x334A9EFF),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(5),
                 border: Border.all(color: const Color(0x554A9EFF)),
               ),
-              child: Text(
-                '${_features.length} öğe',
-                style: const TextStyle(color: Color(0xFF4A9EFF), fontSize: 11, fontWeight: FontWeight.w700),
-              ),
+              child: Text('${_features.length}', style: const TextStyle(color: Color(0xFF4A9EFF), fontSize: 11, fontWeight: FontWeight.w700)),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 4),
             GestureDetector(
               onTap: _clearKml,
-              child: Container(
-                width: 32, height: 32,
-                alignment: Alignment.center,
-                child: const Icon(Icons.close, color: Colors.white54, size: 18),
+              child: const Padding(
+                padding: EdgeInsets.all(8),
+                child: Icon(Icons.close, color: Colors.white38, size: 16),
               ),
             ),
-          ],
+          ] else
+            const Spacer(),
           GestureDetector(
             onTap: _pickKmlFile,
             child: Container(
               margin: const EdgeInsets.only(right: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
               decoration: BoxDecoration(
                 color: const Color(0xFF4A9EFF),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(9),
               ),
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.folder_open, color: Colors.white, size: 16),
+                  Icon(Icons.folder_open, color: Colors.white, size: 15),
                   SizedBox(width: 4),
-                  Text('KML', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+                  Text('KML', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                 ],
               ),
             ),
@@ -363,22 +458,12 @@ class _MapScreenState extends State<MapScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _mapBtn(
-          icon: Icons.add,
-          onTap: () => _mapController?.animateCamera(CameraUpdate.zoomIn()),
-        ),
+        _mapBtn(icon: Icons.add, onTap: () => _mapController?.animateCamera(CameraUpdate.zoomIn())),
         const SizedBox(height: 6),
-        _mapBtn(
-          icon: Icons.remove,
-          onTap: () => _mapController?.animateCamera(CameraUpdate.zoomOut()),
-        ),
+        _mapBtn(icon: Icons.remove, onTap: () => _mapController?.animateCamera(CameraUpdate.zoomOut())),
         if (_features.isNotEmpty) ...[
           const SizedBox(height: 6),
-          _mapBtn(
-            icon: Icons.fit_screen,
-            onTap: _fitBounds,
-            tooltip: 'Tümünü Göster',
-          ),
+          _mapBtn(icon: Icons.fit_screen, onTap: _fitBounds, tooltip: 'Tümünü Göster'),
         ],
         const SizedBox(height: 6),
         _mapBtn(
@@ -386,42 +471,27 @@ class _MapScreenState extends State<MapScreen> {
           color: _trackingEnabled ? const Color(0xFF4A9EFF) : null,
           onTap: _locationLoading ? null : _toggleTracking,
           loading: _locationLoading,
-          tooltip: _trackingEnabled ? 'GPS Kapalı' : 'GPS Açık',
         ),
         if (_myLocation != null) ...[
           const SizedBox(height: 6),
-          _mapBtn(
-            icon: Icons.my_location,
-            onTap: _goToMyLocation,
-            tooltip: 'Konuma Git',
-          ),
+          _mapBtn(icon: Icons.my_location, onTap: _goToMyLocation),
         ],
       ],
     );
   }
 
-  Widget _mapBtn({
-    required IconData icon,
-    VoidCallback? onTap,
-    Color? color,
-    bool loading = false,
-    String? tooltip,
-  }) {
+  Widget _mapBtn({required IconData icon, VoidCallback? onTap, Color? color, bool loading = false, String? tooltip}) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        width: 46,
-        height: 46,
+        width: 46, height: 46,
         decoration: BoxDecoration(
           color: const Color(0xEE0F0F1E),
           borderRadius: BorderRadius.circular(12),
           boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 6)],
         ),
         child: loading
-            ? const Padding(
-                padding: EdgeInsets.all(12),
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4A9EFF)),
-              )
+            ? const Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4A9EFF)))
             : Icon(icon, color: color ?? Colors.white, size: 22),
       ),
     );

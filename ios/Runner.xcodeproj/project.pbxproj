@@ -1,0 +1,3 @@
+// Xcode project file — flutter create ile otomatik oluşturulur.
+// Bu dosya flutter create komutu çalıştırıldığında gerçek içerikle dolar.
+// Aşağıdaki xcconfig dosyalarını kullanmayı unutmayın.

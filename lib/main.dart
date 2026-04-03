@@ -13,16 +13,16 @@ void main() {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
-  runApp(const KmlViewerApp());
+  runApp(const KeMaLApp());
 }
 
-class KmlViewerApp extends StatelessWidget {
-  const KmlViewerApp({super.key});
+class KeMaLApp extends StatelessWidget {
+  const KeMaLApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'KML Görüntüleyici',
+      title: 'KeMaL',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
