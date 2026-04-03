@@ -80,7 +80,8 @@ hr { border-color:rgba(255,255,255,0.06) !important; }
 
 # ─── Session state ─────────────────────────────────────────────────────────
 for k, v in [('features', []), ('file_name', None),
-              ('my_location', None), ('gps_active', False)]:
+              ('my_location', None), ('gps_active', False),
+              ('uploader_key', 0)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -209,7 +210,8 @@ with st.sidebar:
 
     # KML yükleme
     st.markdown('#### 📂 KML Dosyası')
-    uploaded = st.file_uploader('KML yükle', type=['kml'], label_visibility='collapsed')
+    uploaded = st.file_uploader('KML yükle', type=['kml'], label_visibility='collapsed',
+                                key=f'kml_up_{st.session_state.uploader_key}')
     if uploaded and uploaded.name != st.session_state.file_name:
         try:
             feats = parse_kml(uploaded.read().decode('utf-8', errors='replace'))
@@ -242,6 +244,7 @@ with st.sidebar:
         if st.button('🗑 KML Temizle', use_container_width=True):
             st.session_state.features = []
             st.session_state.file_name = None
+            st.session_state.uploader_key += 1
             st.rerun()
 
     st.markdown('---')
